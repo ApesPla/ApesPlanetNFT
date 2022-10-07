@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MIT
-// ERC721A Contracts v4.2.3
-// Creator: Chiru Labs
-
 pragma solidity ^0.8.4;
 
 import './IERC721A.sol';
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 /**
  * @dev Interface of ERC721 token receiver.
@@ -16,6 +14,48 @@ interface ERC721A__IERC721Receiver {
         uint256 tokenId,
         bytes calldata data
     ) external returns (bytes4);
+}
+
+interface IERC2981Royalties {
+    function royaltyInfo(uint256 _tokenId, uint256 _value)
+        external
+        view
+        returns (address _receiver, uint256 _royaltyAmount);
+}
+
+abstract contract ERC2981PerTokenRoyalties is IERC2981Royalties {
+    struct Royalty {
+        address recipient;
+        uint256 value;
+    }
+
+    mapping(uint256 => Royalty) internal _royalties;
+    address _treasury;
+    uint256 _royaltyFee;
+
+    /// @dev Sets token royalties
+    /// @param id the token id fir which we register the royalties
+    /// @param recipient recipient of the royalties
+    /// @param value percentage (using 2 decimals - 10000 = 100, 0 = 0)
+    function _setTokenRoyalty(
+        uint256 id,
+        address recipient,
+        uint256 value
+    ) internal {
+        require(value <= 10000, 'ERC2981Royalties: Too high');
+
+        _royalties[id] = Royalty(recipient, value);
+    }
+
+    /// @inheritdoc IERC2981Royalties
+    function royaltyInfo(uint256 tokenId, uint256 value)
+        external
+        view
+        override
+        returns (address receiver, uint256 royaltyAmount)
+    {
+        return (_treasury, (value * _royaltyFee) / 10000);
+    }
 }
 
 /**
@@ -33,7 +73,7 @@ interface ERC721A__IERC721Receiver {
  * - An owner cannot have more than 2**64 - 1 (max value of uint64) of supply.
  * - The maximum token ID cannot exceed 2**256 - 1 (max value of uint256).
  */
-contract ApesPlanetV1 is IERC721A {
+contract ApesPlanetV1 is IERC721A, ERC2981PerTokenRoyalties, Initializable {
     // Bypass for a `--via-ir` bug (https://github.com/chiru-labs/ERC721A/pull/364).
     struct TokenApprovalRef {
         address value;
@@ -135,11 +175,15 @@ contract ApesPlanetV1 is IERC721A {
 
     address private _owner;
 
+    string private _uri;
+
+    string private _contractURI;
+
     // =============================================================
     //                          CONSTRUCTOR
     // =============================================================
 
-    constructor(string memory name_, string memory symbol_) {
+    function initialize(string memory name_, string memory symbol_) external initializer {
         _name = name_;
         _symbol = symbol_;
         _currentIndex = _startTokenId();
@@ -147,7 +191,7 @@ contract ApesPlanetV1 is IERC721A {
     }
 
     modifier onlyOwner{
-        require(_msgSender() == _owner,"onlyOwner");
+        require(msg.sender == _owner,"onlyOwner");
         _;
     }
 
@@ -206,6 +250,19 @@ contract ApesPlanetV1 is IERC721A {
         _owner = newOwner;
     }
 
+    function setURI(string memory uri_) external onlyOwner{
+        _uri = uri_;
+    }
+
+    function setContractURI(string memory _curi) external onlyOwner {
+        _contractURI = _curi;
+    }
+
+    function setRoyal(address _royltyAddr, uint256 _per) external onlyOwner{
+        _treasury = _royltyAddr;
+        _royaltyFee = _per;
+    }
+
     // =============================================================
     //                    ADDRESS DATA OPERATIONS
     // =============================================================
@@ -213,45 +270,45 @@ contract ApesPlanetV1 is IERC721A {
     /**
      * @dev Returns the number of tokens in `owner`'s account.
      */
-    function balanceOf(address owner) public view virtual override returns (uint256) {
-        if (owner == address(0)) revert BalanceQueryForZeroAddress();
-        return _packedAddressData[owner] & _BITMASK_ADDRESS_DATA_ENTRY;
+    function balanceOf(address owner_) public view virtual override returns (uint256) {
+        if (owner_ == address(0)) revert BalanceQueryForZeroAddress();
+        return _packedAddressData[owner_] & _BITMASK_ADDRESS_DATA_ENTRY;
     }
 
     /**
      * Returns the number of tokens minted by `owner`.
      */
-    function _numberMinted(address owner) internal view returns (uint256) {
-        return (_packedAddressData[owner] >> _BITPOS_NUMBER_MINTED) & _BITMASK_ADDRESS_DATA_ENTRY;
+    function _numberMinted(address owner_) internal view returns (uint256) {
+        return (_packedAddressData[owner_] >> _BITPOS_NUMBER_MINTED) & _BITMASK_ADDRESS_DATA_ENTRY;
     }
 
     /**
      * Returns the number of tokens burned by or on behalf of `owner`.
      */
-    function _numberBurned(address owner) internal view returns (uint256) {
-        return (_packedAddressData[owner] >> _BITPOS_NUMBER_BURNED) & _BITMASK_ADDRESS_DATA_ENTRY;
+    function _numberBurned(address owner_) internal view returns (uint256) {
+        return (_packedAddressData[owner_] >> _BITPOS_NUMBER_BURNED) & _BITMASK_ADDRESS_DATA_ENTRY;
     }
 
     /**
      * Returns the auxiliary data for `owner`. (e.g. number of whitelist mint slots used).
      */
-    function _getAux(address owner) internal view returns (uint64) {
-        return uint64(_packedAddressData[owner] >> _BITPOS_AUX);
+    function _getAux(address owner_) internal view returns (uint64) {
+        return uint64(_packedAddressData[owner_] >> _BITPOS_AUX);
     }
 
     /**
      * Sets the auxiliary data for `owner`. (e.g. number of whitelist mint slots used).
      * If there are multiple variables, please pack them into a uint64.
      */
-    function _setAux(address owner, uint64 aux) internal virtual {
-        uint256 packed = _packedAddressData[owner];
+    function _setAux(address owner_, uint64 aux) internal virtual {
+        uint256 packed = _packedAddressData[owner_];
         uint256 auxCasted;
         // Cast `aux` with assembly to avoid redundant masking.
         assembly {
             auxCasted := aux
         }
         packed = (packed & _BITMASK_AUX_COMPLEMENT) | (auxCasted << _BITPOS_AUX);
-        _packedAddressData[owner] = packed;
+        _packedAddressData[owner_] = packed;
     }
 
     // =============================================================
@@ -311,7 +368,15 @@ contract ApesPlanetV1 is IERC721A {
      * by default, it can be overridden in child contracts.
      */
     function _baseURI() internal view virtual returns (string memory) {
-        return '';
+        return _uri;
+    }
+
+    function contractURI() external view returns (string memory){
+        return _contractURI;
+    }
+
+    function owner() external view returns (address){
+        return _owner;
     }
 
     // =============================================================
@@ -397,12 +462,12 @@ contract ApesPlanetV1 is IERC721A {
     /**
      * @dev Packs ownership data into a single uint256.
      */
-    function _packOwnershipData(address owner, uint256 flags) private view returns (uint256 result) {
+    function _packOwnershipData(address owner_, uint256 flags) private view returns (uint256 result) {
         assembly {
             // Mask `owner` to the lower 160 bits, in case the upper bits somehow aren't clean.
-            owner := and(owner, _BITMASK_ADDRESS)
+            owner_ := and(owner_, _BITMASK_ADDRESS)
             // `owner | (block.timestamp << _BITPOS_START_TIMESTAMP) | flags`.
-            result := or(owner, or(shl(_BITPOS_START_TIMESTAMP, timestamp()), flags))
+            result := or(owner_, or(shl(_BITPOS_START_TIMESTAMP, timestamp()), flags))
         }
     }
 
@@ -436,15 +501,15 @@ contract ApesPlanetV1 is IERC721A {
      * Emits an {Approval} event.
      */
     function approve(address to, uint256 tokenId) public virtual override {
-        address owner = ownerOf(tokenId);
+        address owner_ = ownerOf(tokenId);
 
-        if (_msgSenderERC721A() != owner)
-            if (!isApprovedForAll(owner, _msgSenderERC721A())) {
+        if (_msgSenderERC721A() != owner_)
+            if (!isApprovedForAll(owner_, _msgSenderERC721A())) {
                 revert ApprovalCallerNotOwnerNorApproved();
             }
 
         _tokenApprovals[tokenId].value = to;
-        emit Approval(owner, to, tokenId);
+        emit Approval(owner_, to, tokenId);
     }
 
     /**
@@ -481,8 +546,8 @@ contract ApesPlanetV1 is IERC721A {
      *
      * See {setApprovalForAll}.
      */
-    function isApprovedForAll(address owner, address operator) public view virtual override returns (bool) {
-        return _operatorApprovals[owner][operator];
+    function isApprovedForAll(address owner_, address operator) public view virtual override returns (bool) {
+        return _operatorApprovals[owner_][operator];
     }
 
     /**
@@ -504,16 +569,16 @@ contract ApesPlanetV1 is IERC721A {
      */
     function _isSenderApprovedOrOwner(
         address approvedAddress,
-        address owner,
+        address owner_,
         address msgSender
     ) private pure returns (bool result) {
         assembly {
             // Mask `owner` to the lower 160 bits, in case the upper bits somehow aren't clean.
-            owner := and(owner, _BITMASK_ADDRESS)
+            owner_ := and(owner_, _BITMASK_ADDRESS)
             // Mask `msgSender` to the lower 160 bits, in case the upper bits somehow aren't clean.
             msgSender := and(msgSender, _BITMASK_ADDRESS)
             // `msgSender == owner || msgSender == approvedAddress`.
-            result := or(eq(msgSender, owner), eq(msgSender, approvedAddress))
+            result := or(eq(msgSender, owner_), eq(msgSender, approvedAddress))
         }
     }
 
