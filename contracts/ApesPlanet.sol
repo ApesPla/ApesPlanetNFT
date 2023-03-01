@@ -73,7 +73,7 @@ abstract contract ERC2981PerTokenRoyalties is IERC2981Royalties {
  * - An owner cannot have more than 2**64 - 1 (max value of uint64) of supply.
  * - The maximum token ID cannot exceed 2**256 - 1 (max value of uint256).
  */
-contract ApesPlanetV1 is IERC721A, ERC2981PerTokenRoyalties, Initializable {
+contract ApesPlanetV3 is IERC721A, ERC2981PerTokenRoyalties, Initializable {
     // Bypass for a `--via-ir` bug (https://github.com/chiru-labs/ERC721A/pull/364).
     struct TokenApprovalRef {
         address value;
@@ -179,6 +179,10 @@ contract ApesPlanetV1 is IERC721A, ERC2981PerTokenRoyalties, Initializable {
 
     string private _contractURI;
 
+    bool public isStart;
+
+    mapping(address => bool) public transferWhitelist;
+
     // =============================================================
     //                          CONSTRUCTOR
     // =============================================================
@@ -188,6 +192,9 @@ contract ApesPlanetV1 is IERC721A, ERC2981PerTokenRoyalties, Initializable {
         _symbol = symbol_;
         _currentIndex = _startTokenId();
         _owner = msg.sender;
+        _treasury = msg.sender;
+        _royaltyFee = 500;
+        _contractURI = "https://ipfs.io/ipfs/QmchuiXFBCpnrTSQHD6pxC2ZMPiQ1huZ8FjsBF8BeX29yg";
     }
 
     modifier onlyOwner{
@@ -261,6 +268,16 @@ contract ApesPlanetV1 is IERC721A, ERC2981PerTokenRoyalties, Initializable {
     function setRoyal(address _royltyAddr, uint256 _per) external onlyOwner{
         _treasury = _royltyAddr;
         _royaltyFee = _per;
+    }
+
+    function toggleStart() external onlyOwner{
+        isStart = !isStart;
+    }
+
+    function transferWhitelisting(address[] memory _accs, bool _status) external onlyOwner{
+        for(uint8 i = 0; i < _accs.length; i++){
+            transferWhitelist[_accs[i]] = _status;
+        }
     }
 
     // =============================================================
@@ -359,7 +376,7 @@ contract ApesPlanetV1 is IERC721A, ERC2981PerTokenRoyalties, Initializable {
         if (!_exists(tokenId)) revert URIQueryForNonexistentToken();
 
         string memory baseURI = _baseURI();
-        return bytes(baseURI).length != 0 ? string(abi.encodePacked(baseURI, _toString(tokenId))) : '';
+        return bytes(baseURI).length != 0 ? string(abi.encodePacked(baseURI, _toString(tokenId), ".json")) : '';
     }
 
     /**
@@ -620,6 +637,7 @@ contract ApesPlanetV1 is IERC721A, ERC2981PerTokenRoyalties, Initializable {
         address to,
         uint256 tokenId
     ) public virtual override {
+        require(isStart || transferWhitelist[from],"Not Started");
         uint256 prevOwnershipPacked = _packedOwnershipOf(tokenId);
 
         if (address(uint160(prevOwnershipPacked)) != from) revert TransferFromIncorrectOwner();
